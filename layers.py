@@ -106,7 +106,12 @@ class Nice(dz.Flow):
         x_1 = (x_1 - mean_F) / var_F.sqrt()
 
         x = torch.cat((x1, x2), dim=-1)
-        ll = torch.sum(torch.log(torch.cat(var_F, var_G), dim=-1), dim=-1)
+        ll = (
+            - 0.5 * torch.sum(
+                torch.log(torch.cat(var_F, var_G), dim=-1),
+                dim=-1
+            )
+        )
         return x, ll
 
 
@@ -140,27 +145,51 @@ class GlowBlock(dz.Flow):
                 chunk_sizes[1]
             )
             nice_list.append(Nice(
-                mlp_fn(affine_F, in, out, chunk_sizes),
-                mlp_fn(affine_G, in, out, chunk_sizes),
+                mlp_fn(affine_F,
+                       chunk_sizes[1] + num_cond_features,
+                       2 * chunk_sizes[0],
+                       chunk_sizes[0]),
+                mlp_fn(affine_G,
+                       chunk_sizes[0] + num_cond_features,
+                       2 * chunk_sizes[1],
+                       chunk_sizes[1]),
                 chunk_sizes
             ))
         
+        self.bn_list = nn.ModuleList(bn_list)
+        self.linear_list = nn.ModuleList(linear_list)
+        self.nice_list = nn.ModuleList(nice_list)
 
-    def flow(
+    def sample(
         self,
         x: torch.Tensor,
         *args,
         **kwargs
     ) -> torch.Tensor:
-        sdf
+        for nice, linear, bn in reversed(list(zip(self.bn_list,
+                                                  self.linear_list,
+                                                  self.nice_list))):
+            x = nice.flow(x, cond)
+            x = linear.flow(x)
+            x = bn.flow(x)
+        return x
 
-    def inverse(
+    def likelihood(
         self,
         x: torch.Tensor,
         *args,
         **kwargs
     ):
-        pass
+        ll = 0.0
+        for bn, linear, nice in zip(self.bn_list,
+                                    self.linear_list,
+                                    self.nice_list):
+            x, ll_bn = bn.likelihood(x)
+            x, ll_linear = linear.likelihood(x)
+            x, ll_nice = nice.likelihood(x, cond)
+            ll_nice = ll_bn + ll_linear + ll_nice
+            ll = ll + ll_nice
+        return ll
 
 
 # class GlowNet(dz.Distribution):
