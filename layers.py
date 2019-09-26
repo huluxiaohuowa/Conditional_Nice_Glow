@@ -1,10 +1,11 @@
 import json
 import typing as t
 
+import torch
 from torch import nn
 
 import distrib_zoo as dz
-from .func import *
+from func import *
 
 
 class SimpleLinear(nn.Module):
@@ -15,12 +16,13 @@ class SimpleLinear(nn.Module):
         bias: bool=False,
         activation: str='elu'
     ):
-        self.bn = nn.BatchNorm1d(num_in_feats)
-        self.fc == nn.Linear(num_in_feats, 2 * num_out_feats)
+        super().__init__()
+        # self.bn = nn.BatchNorm1d(num_in_feats)
+        self.fc = nn.Linear(num_in_feats, num_out_feats)
         self.activation = get_activation(activation)
 
     def forward(self, x: torch.Tensor):
-        x = self.bn(x)
+        # x = self.bn(x)
         x = self.activation(
             self.fc(x)
         )
@@ -48,6 +50,7 @@ class Nice(dz.Flow):
         self._affine_F = affine_F
         self._affine_G = affine_G
         self.chunk_sizes = chunk_sizes
+        self.num_blocks = num_blocks
 
     def flow(
         self,
@@ -113,30 +116,57 @@ class GlowBlock(dz.Flow):
         self,
         num_features: int,
         num_cond_features: int,
-        num_conf_features: int
+        num_blocks: int,
+        chunk_sizes: t.List[int]=[1, 2]
     ):
         super().__init__()
-        self.inv_linear = dz.InvLinear(num_features)
-        self.batch_norm = dz.BatchNormFlow(num_features)
-        self.nice = Nice()
+        self.num_features = num_features
+        self.num_cond_features = num_cond_features
+        self.num_blocks = num_blocks
+        self.chunk_sizes = chunk_sizes
+
+        bn_list = []
+        linear_list = []
+        nice_list = []
+        for _ in range(self._num_blocks):
+            bn_list.append(dz.BatchNormFlow(num_features))
+            linear_list.append(dz.InvLinear(num_features))
+            affine_F = SimpleLinear(
+                chunk_sizes[1],
+                chunk_sizes[0]
+            )
+            affine_G = SimpleLinear(
+                chunk_sizes[0],
+                chunk_sizes[1]
+            )
+            nice_list.append(Nice(
+                mlp_fn(affine_F, in, out, chunk_sizes),
+                mlp_fn(affine_G, in, out, chunk_sizes),
+                chunk_sizes
+            ))
+        
 
     def flow(
         self,
-        x: torch.Tensor
+        x: torch.Tensor,
+        *args,
+        **kwargs
     ) -> torch.Tensor:
         sdf
 
     def inverse(
         self,
-        x: torch.Tensor
+        x: torch.Tensor,
+        *args,
+        **kwargs
     ):
         pass
 
 
-class GlowNet(dz.Distribution):
-    """The Glow network"""
-    def __init__(
-        self,
-        num_blocks: int,
+# class GlowNet(dz.Distribution):
+#     """The Glow network"""
+#     def __init__(
+#         self,
+#         num_blocks: int,
         
-    ):
+#     ):

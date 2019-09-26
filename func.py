@@ -1,4 +1,5 @@
 import typing as t
+import math
 
 import torch
 from torch import nn
@@ -22,15 +23,27 @@ def get_activation(name, *args, **kwargs):
     raise ValueError('Activation not implemented')
 
 
+# def mlp_fn(
+#     x: torch.Tensor,
+#     cond: torch.Tensor,
+#     mlp_func: t.Callable,
+#     chunk_sizes: t.List[int] = [1, 2]
+# ) -> t.Tuple[torch.Tensor]:
+#     x = mlp_func(torch.cat(x, cond), dim=-1)
+#     mu, var = torch.split(x, chunk_sizes, -1)
+#     var = F.softplus(var) / math.log(2)
+#     return mu, var
+
+
 def mlp_fn(
-    x: torch.Tensor,
-    cond: torch.Tensor,
     mlp_func: t.Callable,
-    chunk_sizes: t.List[int] = [1, 2]
-) -> t.Tuple[torch.Tensor]:
-    x = mlp_func(torch.cat(x, cond), dim=-1)
-    if chunk_sizes is None:
-        chunk_sizes = x.size(1) // 2
-    mu, var = torch.split(x, chunk_sizes, -1)
-    var = F.softplus(var) / math.log(2)
-    return mu, var
+    num_in_feats: int,
+    num_out_feats: int,
+    chunk_sizes: t.List[int]=[1, 2]
+):
+    def mlp(x: torch.Tensor, cond: torch.Tensor):
+        x_ = mlp_func(torch.cat((x, cond), dim=-1))
+        mu, var = torch.split(x_, chunk_sizes, -1)
+        var = F.softplus(var) / math.log(2)
+        return mu, var
+    return mlp
