@@ -1,0 +1,3 @@
+[submodule "distrib_zoo"]
+	path = distrib_zoo
+	url = ssh://git@ddl.bjmu.edu.cn:15806/ybli/distrib_zoo.git
