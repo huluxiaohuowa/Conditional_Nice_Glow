@@ -149,6 +149,8 @@ class Glow(dz.Distribution):
         num_cond_features: int,
         num_mid_features: int,
         num_blocks: int,
+        # affine_F: t.Callable=None,
+        # affine_G: t.Callable=None,
         chunk_sizes: t.List[int]=[1, 2]
     ):
         super().__init__()
@@ -163,11 +165,13 @@ class Glow(dz.Distribution):
         for _ in range(self.num_blocks):
             bn_list.append(dz.BatchNormFlow(num_features))
             linear_list.append(dz.InvLinear(num_features))
+            # if affine_F is None:
             affine_F = SimpleLinear(
                 chunk_sizes[1] + num_cond_features,
                 num_mid_features,
                 chunk_sizes[0] * 2
             )
+            # if affine_G is None:
             affine_G = SimpleLinear(
                 chunk_sizes[0] + num_cond_features,
                 num_mid_features,
