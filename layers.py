@@ -3,6 +3,8 @@ import typing as t
 
 import torch
 from torch import nn
+import numpy as np
+from torch_scatter import scatter_add
 
 import distrib_zoo as dz
 from func import *
@@ -12,20 +14,31 @@ class SimpleLinear(nn.Module):
     def __init__(
         self,
         num_in_feats: int,
+        num_mid_feats: int,
         num_out_feats: int,
         bias: bool=False,
-        activation: str='elu'
+        # activation: str='elu'
     ):
         super().__init__()
-        # self.bn = nn.BatchNorm1d(num_in_feats)
-        self.fc = nn.Linear(num_in_feats, num_out_feats)
-        self.activation = get_activation(activation)
+        self.fc1 = nn.Linear(num_in_feats, num_mid_feats)
+        self.bn1 = nn.BatchNorm1d(num_mid_feats)
+        # self.relu1 = nn.ReLU()
 
-    def forward(self, x: torch.Tensor):
+        # self.activation = get_activation(activation)
+        self.bn2 = nn.BatchNorm1d(num_mid_feats)
+        # self.relu2 = nn.ReLU()
+        self.fc2 = nn.Linear(num_mid_feats, num_out_feats)
+
+    def forward(self,
+                x: torch.Tensor,
+                seg_ids: t.Iterable[int]):
         # x = self.bn(x)
-        x = self.activation(
-            self.fc(x)
-        )
+        seg_ids = list(seg_ids)
+        seg_ids = np.arange(len(seg_ids)).repeat(seg_ids)
+        seg_ids.to(x.device)
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = scatter_add(x, seg_ids, dim=0)
+        x = self.fc2(F.relu(self.bn2(x)))
         return x
 
 
