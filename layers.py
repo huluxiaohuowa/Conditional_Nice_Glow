@@ -1,8 +1,10 @@
 import json
 import typing as t
+import math
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 import numpy as np
 from torch_scatter import scatter_add
 
@@ -35,14 +37,17 @@ class SimpleLinear(nn.Module):
                 seg_ids: t.Iterable[int]):  # size(num_records)
         # x = self.bn(x)
         seg_ids = list(seg_ids)
-        x = torch.repeat_interleave(x, torch.tensor(seg_ids), dim)
+        x = torch.repeat_interleave(x, torch.tensor(seg_ids), dim=0)
+        x = torch.cat((x, cond), dim=-1)
         seg_ids = np.arange(len(seg_ids)).repeat(seg_ids)
         seg_ids = torch.from_numpy(seg_ids)
         seg_ids.to(x.device)
         x = F.relu(self.bn1(self.fc1(x)))
         x = scatter_add(x, seg_ids, dim=0)
         x = self.fc2(F.relu(self.bn2(x)))
-        return x
+        mu, var = torch.split(x, x.size(-1) // 2, -1)
+        var = F.softplus(var) / math.log(2)
+        return mu, var
 
 
 class Nice(dz.Flow):
@@ -66,13 +71,13 @@ class Nice(dz.Flow):
         self._affine_F = affine_F
         self._affine_G = affine_G
         self.chunk_sizes = chunk_sizes
-        self.num_blocks = num_blocks
+        # self.num_blocks = num_blocks
 
     def flow(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs
+        cond: torch.Tensor,
+        seg_ids: t.Iterable[int]
     ) -> torch.Tensor:
         """The forward flow of NICE
 
@@ -83,10 +88,10 @@ class Nice(dz.Flow):
             torch.Tensor: output tensor
         """
         x_1, x_2 = torch.split(x, self.chunk_sizes, dim=-1)
-        mean_F, var_F = self._affine_F(x_2, *args, **kwargs)
+        mean_F, var_F = self._affine_F(x_2, cond, seg_ids)
         x_1 = mean_F + x_1 * var_F.sqrt()
 
-        mean_G, var_G = self._affine_G(x_1, *args, **kargs)
+        mean_G, var_G = self._affine_G(x_1, cond, seg_ids)
         x_2 = mean_G + x_2 * var_G.sqrt()
 
         x = torch.cat((x_1, x_2), dim=-1)
@@ -95,36 +100,36 @@ class Nice(dz.Flow):
     def inverse(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs
+        cond: torch.Tensor,
+        seg_ids: t.Iterable[int]
     ) -> torch.Tensor:
         x_1, x_2 = torch.split(x, self.chunk_sizes, dim=-1)
-        mean_G, var_G = self._affine_G(x_1, *args, **kwargs)
+        mean_G, var_G = self._affine_G(x_1, cond, seg_ids)
         x_2 = (x_2 - mean_G) / var_G.sqrt()
 
-        mean_F, var_F = self._affine_F(x_2, *args, **kwargs)
+        mean_F, var_F = self._affine_F(x_2, cond, seg_ids)
         x_1 = (x_1 - mean_F) / var_F.sqrt()
 
-        x = torch.cat((x1, x2), dim=-1)
+        x = torch.cat((x_1, x_2), dim=-1)
         return x
 
     def likelihood(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs
+        cond: torch.Tensor,
+        seg_ids: t.Iterable[int]
     ) -> torch.Tensor:
         x_1, x_2 = torch.split(x, self.chunk_sizes, dim=-1)
-        mean_G, var_G = self._affine_G(x_1, *args, **kwargs)
+        mean_G, var_G = self._affine_G(x_1, cond, seg_ids)
         x_2 = (x_2 - mean_G) / var_G.sqrt()
 
-        mean_F, var_F = self._affine_F(x_2, *args, **kwargs)
+        mean_F, var_F = self._affine_F(x_2, cond, seg_ids)
         x_1 = (x_1 - mean_F) / var_F.sqrt()
 
-        x = torch.cat((x1, x2), dim=-1)
+        x = torch.cat((x_1, x_2), dim=-1)
         ll = (
             - 0.5 * torch.sum(
-                torch.log(torch.cat(var_F, var_G), dim=-1),
+                torch.log(torch.cat((var_F, var_G), dim=-1)),
                 dim=-1
             )
         )
@@ -150,7 +155,7 @@ class Glow(dz.Distribution):
         bn_list = []
         linear_list = []
         nice_list = []
-        for _ in range(self._num_blocks):
+        for _ in range(self.num_blocks):
             bn_list.append(dz.BatchNormFlow(num_features))
             linear_list.append(dz.InvLinear(num_features))
             affine_F = SimpleLinear(
@@ -164,10 +169,8 @@ class Glow(dz.Distribution):
                 chunk_sizes[1] * 2
             )
             nice_list.append(Nice(
-                mlp_fn(affine_F,
-                       chunk_sizes[0]),
-                mlp_fn(affine_G,
-                       chunk_sizes[1]),
+                affine_F,
+                affine_G,
                 chunk_sizes
             ))
 
@@ -178,12 +181,14 @@ class Glow(dz.Distribution):
     def sample(
         self,
         x: torch.Tensor,
-        cond: torch.Tensor
+        cond: torch.Tensor,
+        seg_ids: t.Iterable[int]
     ) -> torch.Tensor:
-        for nice, linear, bn in reversed(list(zip(self.bn_list,
+        for bn, linear, nice in reversed(list(zip(self.bn_list,
                                                   self.linear_list,
                                                   self.nice_list))):
-            x = nice.flow(x, cond)
+            # print(type(nice))
+            x = nice.flow(x, cond, seg_ids)
             x = linear.flow(x)
             x = bn.flow(x)
         return x
@@ -191,7 +196,8 @@ class Glow(dz.Distribution):
     def likelihood(
         self,
         x: torch.Tensor,
-        cond: torch.Tensor
+        cond: torch.Tensor,
+        seg_ids: t.Iterable[int]
     ):
         ll = 0.0
         for bn, linear, nice in zip(self.bn_list,
@@ -199,7 +205,7 @@ class Glow(dz.Distribution):
                                     self.nice_list):
             x, ll_bn = bn.likelihood(x)
             x, ll_linear = linear.likelihood(x)
-            x, ll_nice = nice.likelihood(x, cond)
+            x, ll_nice = nice.likelihood(x, cond, seg_ids)
             ll_nice = ll_bn + ll_linear + ll_nice
             ll = ll + ll_nice
         return ll

@@ -37,14 +37,18 @@ def get_activation(name, *args, **kwargs):
 
 def mlp_fn(
     mlp_func: t.Callable,
+    x: torch.Tensor,
+    cond: torch.Tensor,
+    seg_ids
     # # num_in_feats: int,
     # # num_mid_feats: int,
     # num_out_feats: int,
-    chunk_sizes: t.List[int]=[1, 2]
+    # chunk_sizes: t.List[int]=[1, 2]
 ):
-    def mlp(x: torch.Tensor, cond: torch.Tensor):
-        x_ = mlp_func(torch.cat((x, cond), dim=-1))
-        mu, var = torch.split(x_, chunk_sizes, -1)
+    def mlp(x: torch.Tensor, cond: torch.Tensor, seg_ids):
+        x = torch.repeat_interleave(x, torch.tensor(seg_ids), dim=0)
+        x_ = mlp_func(torch.cat((x, cond), dim=-1), seg_ids)
+        mu, var = torch.split(x_, x_.size(-1) // 2, -1)
         var = F.softplus(var) / math.log(2)
         return mu, var
     return mlp
