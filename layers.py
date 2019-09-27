@@ -39,14 +39,10 @@ class SimpleLinear(nn.Module):
     def forward(self,
                 x: torch.Tensor,  # num_records * 3
                 cond: torch.Tensor,  # ragged
-                seg_ids: t.Iterable[int]):  # size(num_records)
+                seg_ids: torch.Tensor):  # size(num_records)
         # x = self.bn(x)
-        seg_ids = list(seg_ids)
-        x = torch.repeat_interleave(x, torch.tensor(seg_ids), dim=0)
+        x = x[seg_ids, ...]
         x = torch.cat((x, cond), dim=-1)
-        seg_ids = np.arange(len(seg_ids)).repeat(seg_ids)
-        seg_ids = torch.from_numpy(seg_ids)
-        seg_ids.to(x.device)
         x = F.relu(self.bn1(self.fc1(x)))
         x = scatter_add(x, seg_ids, dim=0)
         x = self.fc2(F.relu(self.bn2(x)))
