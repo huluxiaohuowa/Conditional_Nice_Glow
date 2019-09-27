@@ -30,11 +30,14 @@ class SimpleLinear(nn.Module):
         self.fc2 = nn.Linear(num_mid_feats, num_out_feats)
 
     def forward(self,
-                x: torch.Tensor,
-                seg_ids: t.Iterable[int]):
+                x: torch.Tensor,  # num_records * 3
+                cond: torch.Tensor,  # ragged
+                seg_ids: t.Iterable[int]):  # size(num_records)
         # x = self.bn(x)
         seg_ids = list(seg_ids)
+        x = torch.repeat_interleave(x, torch.tensor(seg_ids), dim)
         seg_ids = np.arange(len(seg_ids)).repeat(seg_ids)
+        seg_ids = torch.from_numpy(seg_ids)
         seg_ids.to(x.device)
         x = F.relu(self.bn1(self.fc1(x)))
         x = scatter_add(x, seg_ids, dim=0)
@@ -128,12 +131,13 @@ class Nice(dz.Flow):
         return x, ll
 
 
-class GlowBlock(dz.Flow):
+class Glow(dz.Distribution):
     """The glow block for starting coordinates prediction"""
     def __init__(
         self,
         num_features: int,
         num_cond_features: int,
+        num_mid_features: int,
         num_blocks: int,
         chunk_sizes: t.List[int]=[1, 2]
     ):
@@ -150,25 +154,23 @@ class GlowBlock(dz.Flow):
             bn_list.append(dz.BatchNormFlow(num_features))
             linear_list.append(dz.InvLinear(num_features))
             affine_F = SimpleLinear(
-                chunk_sizes[1],
-                chunk_sizes[0]
+                chunk_sizes[1] + num_cond_features,
+                num_mid_features,
+                chunk_sizes[0] * 2
             )
             affine_G = SimpleLinear(
-                chunk_sizes[0],
-                chunk_sizes[1]
+                chunk_sizes[0] + num_cond_features,
+                num_mid_features,
+                chunk_sizes[1] * 2
             )
             nice_list.append(Nice(
                 mlp_fn(affine_F,
-                       chunk_sizes[1] + num_cond_features,
-                       2 * chunk_sizes[0],
                        chunk_sizes[0]),
                 mlp_fn(affine_G,
-                       chunk_sizes[0] + num_cond_features,
-                       2 * chunk_sizes[1],
                        chunk_sizes[1]),
                 chunk_sizes
             ))
-        
+
         self.bn_list = nn.ModuleList(bn_list)
         self.linear_list = nn.ModuleList(linear_list)
         self.nice_list = nn.ModuleList(nice_list)
@@ -176,8 +178,7 @@ class GlowBlock(dz.Flow):
     def sample(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs
+        cond: torch.Tensor
     ) -> torch.Tensor:
         for nice, linear, bn in reversed(list(zip(self.bn_list,
                                                   self.linear_list,
@@ -190,8 +191,7 @@ class GlowBlock(dz.Flow):
     def likelihood(
         self,
         x: torch.Tensor,
-        *args,
-        **kwargs
+        cond: torch.Tensor
     ):
         ll = 0.0
         for bn, linear, nice in zip(self.bn_list,
@@ -210,5 +210,4 @@ class GlowBlock(dz.Flow):
 #     def __init__(
 #         self,
 #         num_blocks: int,
-        
 #     ):

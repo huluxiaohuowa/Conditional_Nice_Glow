@@ -37,8 +37,9 @@ def get_activation(name, *args, **kwargs):
 
 def mlp_fn(
     mlp_func: t.Callable,
-    num_in_feats: int,
-    num_out_feats: int,
+    # # num_in_feats: int,
+    # # num_mid_feats: int,
+    # num_out_feats: int,
     chunk_sizes: t.List[int]=[1, 2]
 ):
     def mlp(x: torch.Tensor, cond: torch.Tensor):
