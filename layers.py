@@ -9,7 +9,12 @@ import numpy as np
 from torch_scatter import scatter_add
 
 import distrib_zoo as dz
-from func import *
+
+__all__ = [
+    'SimpleLinear',
+    'Nice',
+    'Glow'
+]
 
 
 class SimpleLinear(nn.Module):
